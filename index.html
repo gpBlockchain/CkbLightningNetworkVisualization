@@ -1,0 +1,431 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Lightning Network Visualization</title>
+    <script src="https://d3js.org/d3.v7.min.js"></script>
+    <style>
+        body { margin: 0; font-family: Arial, sans-serif; background-color: #1E1E1E; color: #FFFFFF; }
+        #header { padding: 10px; display: flex; justify-content: space-between; align-items: center; background-color: #2A2A2A; }
+        #query-bar input, #rpc-bar input { padding: 5px; width: 250px; font-size: 16px; margin-right: 10px; }
+        #query-bar button, #rpc-bar button { padding: 5px 10px; background-color: #F7931A; border: none; color: white; cursor: pointer; margin-left: 10px; }
+        #filter-bar select { padding: 5px; font-size: 16px; background-color: #3A3A3A; color: #FFFFFF; border: 1px solid #F7931A; }
+        #overview { display: flex; justify-content: space-around; padding: 10px; background-color: #2A2A2A; }
+        .stat-card { background-color: #3A3A3A; padding: 10px; border-radius: 5px; text-align: center; }
+        .stat-card h3 { margin: 0; font-size: 24px; color: #F7931A; }
+        #chart { width: 100%; height: 70vh; position: relative; }
+        #info-panel { position: fixed; top: 100px; right: 10px; width: 300px; background-color: #2A2A2A; padding: 10px; border-radius: 5px; display: none; }
+        #status { text-align: center; padding: 20px; color: #FFA500; }
+        .highlighted-node { transform: scale(1.5); stroke: #F7931A; stroke-width: 2px; animation: blink 1s infinite; }
+        .highlighted-edge { stroke: #F7931A; stroke-width: 3px; opacity: 1.0; }
+        .path-node { stroke: #00FF00; stroke-width: 2px; fill: #00FF00; }
+        .path-edge { stroke: #00FF00; stroke-width: 4px; opacity: 1.0; }
+        .dimmed { opacity: 0.3; }
+        @keyframes blink { 50% { stroke-opacity: 0.5; } }
+    </style>
+</head>
+<body onload="fetchRPC()">
+<div id="header">
+    <div id="query-bar">
+        <input type="text" id="query-input1" placeholder="Start Node Public Key (e.g., 0268847a...)">
+        <input type="text" id="query-input2" placeholder="Target Node Public Key (e.g., 02d0ab8c...)">
+        <button onclick="handleQuery()">Query</button>
+    </div>
+    <div id="rpc-bar">
+        <input type="text" id="rpc-url" placeholder="Enter RPC Address" value="http://18.162.235.225:8227">
+        <button onclick="fetchRPC()">Fetch RPC Data</button>
+    </div>
+    <div id="filter-bar">
+        <select id="channel-filter" onchange="applyFilter()">
+            <option value="all">Show All Channels</option>
+            <option value="ckb">Show ckb Channels Only</option>
+            <option value="udt">Show UDT Channels Only</option>
+        </select>
+    </div>
+    <span>Real-time Update</span>
+</div>
+<div id="overview">
+    <div class="stat-card">
+        <h3 id="node-count">0</h3>
+        <p>Total Nodes</p>
+    </div>
+    <div class="stat-card">
+        <h3 id="channel-count">0</h3>
+        <p>Total Channels</p>
+    </div>
+    <div class="stat-card">
+        <h3 id="ckb-capacity">0 ckb</h3>
+        <p>ckb Capacity</p>
+    </div>
+    <div class="stat-card">
+        <h3 id="udt-capacity">0 UDT</h3>
+        <p>UDT Capacity</p>
+    </div>
+</div>
+<div id="status">Loading...</div>
+<div id="chart"></div>
+<div id="info-panel">
+    <h2>Node Information</h2>
+    <p><strong>Public Key:</strong> <span id="node-id"></span></p>
+    <p><strong>Connected Channels:</strong> <span id="channel-count-info"></span></p>
+    <p><strong>ckb Capacity:</strong> <span id="ckb-capacity-info"></span></p>
+    <p><strong>UDT Capacity:</strong> <span id="udt-capacity-info"></span></p>
+    <p><strong>Average Fee Rate:</strong> <span id="avg-fee-rate"></span></p>
+    <p><strong>Last Updated:</strong> <span id="last-updated"></span></p>
+    <button onclick="closeInfoPanel()">Close</button>
+</div>
+
+<script>
+    let nodes = [];
+    let edges = [];
+    let allEdges = [];
+    let rpcData = null;
+    let svg, g, zoom;
+    const THREE_DAYS_MS = 3 * 24 * 60 * 60 * 1000;
+    const CURRENT_TIME = new Date().getTime();
+
+    function updateStatus(message) {
+        document.getElementById('status').textContent = message;
+    }
+
+    async function fetchRPC() {
+        const rpcUrl = document.getElementById('rpc-url').value.trim();
+        if (!rpcUrl) {
+            updateStatus('Please enter a valid RPC address');
+            return;
+        }
+        updateStatus('Loading...');
+        try {
+            const response = await fetch(rpcUrl, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    id: 42,
+                    jsonrpc: '2.0',
+                    method: 'graph_channels',
+                    params: [{ limit: '0x1ffff', after: null }]
+                })
+            });
+            if (!response.ok) throw new Error(`HTTP error: ${response.status}`);
+            rpcData = await response.json();
+            if (!rpcData.result || !rpcData.result.channels) throw new Error('Invalid RPC response data');
+            processData(rpcData);
+            updateStatus('Data loaded successfully');
+        } catch (error) {
+            console.error('RPC request failed:', error);
+            updateStatus(`Loading failed: ${error.message}`);
+        }
+    }
+
+    function processData(data) {
+        const channels = data.result.channels;
+        const nodeSet = new Map();
+        allEdges = [];
+
+        channels.forEach(channel => {
+            const time1 = parseInt(channel.last_updated_timestamp_of_node1, 16);
+            const time2 = parseInt(channel.last_updated_timestamp_of_node2, 16);
+
+            if (!nodeSet.has(channel.node1)) {
+                nodeSet.set(channel.node1, time1);
+            } else {
+                nodeSet.set(channel.node1, Math.max(nodeSet.get(channel.node1), time1));
+            }
+            if (!nodeSet.has(channel.node2)) {
+                nodeSet.set(channel.node2, time2);
+            } else {
+                nodeSet.set(channel.node2, Math.max(nodeSet.get(channel.node2), time2));
+            }
+
+            allEdges.push({
+                source: channel.node1,
+                target: channel.node2,
+                capacity: parseInt(channel.capacity, 16) / 1e8,
+                isUDT: channel.udt_type_script !== null,
+                udtType: channel.udt_type_script ? 'UDT' : 'ckb',
+                fee_rate: (parseInt(channel.fee_rate_of_node1, 16) + parseInt(channel.fee_rate_of_node2, 16)) / 2,
+                channel_outpoint: channel.channel_outpoint
+            });
+        });
+
+        nodes = Array.from(nodeSet.entries()).map(([id, lastUpdated]) => ({
+            id,
+            degree: allEdges.filter(e => e.source === id || e.target === id).length,
+            lastUpdated,
+            isActive: (CURRENT_TIME - lastUpdated) <= THREE_DAYS_MS
+        }));
+
+        applyFilter();
+    }
+
+    function applyFilter() {
+        const filter = document.getElementById('channel-filter').value;
+        if (filter === 'ckb') {
+            edges = allEdges.filter(e => !e.isUDT);
+        } else if (filter === 'udt') {
+            edges = allEdges.filter(e => e.isUDT);
+        } else {
+            edges = [...allEdges];
+        }
+        const activeNodeIds = new Set(edges.flatMap(e => [e.source, e.target]));
+        nodes = nodes.filter(n => activeNodeIds.has(n.id));
+        nodes.forEach(n => {
+            n.degree = edges.filter(e => e.source === n.id || e.target === n.id).length;
+        });
+        updateOverview();
+        renderGraph();
+    }
+
+    function updateOverview() {
+        document.getElementById('node-count').textContent = nodes.length;
+        document.getElementById('channel-count').textContent = edges.length;
+        const ckbCapacity = edges.filter(e => !e.isUDT).reduce((sum, e) => sum + e.capacity, 0).toFixed(2);
+        const udtCapacity = edges.filter(e => e.isUDT).reduce((sum, e) => sum + e.capacity, 0).toFixed(2);
+        document.getElementById('ckb-capacity').textContent = `${ckbCapacity} ckb`;
+        document.getElementById('udt-capacity').textContent = `${udtCapacity} UDT`;
+    }
+
+    function renderGraph() {
+        d3.select('#chart svg').remove();
+        const width = window.innerWidth;
+        const height = window.innerHeight * 0.7;
+
+        svg = d3.select('#chart').append('svg')
+            .attr('width', '100%')
+            .attr('height', '100%');
+        g = svg.append('g');
+        zoom = d3.zoom().on('zoom', (event) => g.attr('transform', event.transform));
+        svg.call(zoom);
+
+        const simulation = d3.forceSimulation(nodes)
+            .force('link', d3.forceLink(edges).id(d => d.id).distance(200))
+            .force('charge', d3.forceManyBody().strength(-200))
+            .force('center', d3.forceCenter(width / 2, height / 2))
+            .force('collision', d3.forceCollide().radius(d => 10 + d.degree * 2));
+
+        const link = g.selectAll('.edge')
+            .data(edges)
+            .enter().append('line')
+            .attr('class', 'edge')
+            .attr('stroke', d => d.isUDT ? '#FFD700' : (d.fee_rate < 500 ? '#00F' : d.fee_rate < 2000 ? '#FFA500' : '#F00'))
+            .attr('stroke-width', d => Math.sqrt(d.capacity))
+            .attr('opacity', 0.5);
+
+        const node = g.selectAll('.node')
+            .data(nodes)
+            .enter().append('circle')
+            .attr('class', 'node')
+            .attr('r', d => 5 + d.degree * 2)
+            .attr('fill', d => d.isActive ? '#0F0' : '#666633')
+            .attr('id', d => `node-${d.id}`)
+            .on('click', (event, d) => showNodeInfo(d.id))
+            .call(d3.drag()
+                .on('start', dragstarted)
+                .on('drag', dragged)
+                .on('end', dragended));
+
+        simulation.on('tick', () => {
+            link.attr('x1', d => d.source.x)
+                .attr('y1', d => d.source.y)
+                .attr('x2', d => d.target.x)
+                .attr('y2', d => d.target.y);
+            node.attr('cx', d => d.x)
+                .attr('cy', d => d.y);
+        });
+
+        simulation.tick(100);
+
+        function dragstarted(event) {
+            if (!event.active) simulation.alphaTarget(0.3).restart();
+            event.subject.fx = event.subject.x;
+            event.subject.fy = event.subject.y;
+        }
+        function dragged(event) {
+            event.subject.fx = event.x;
+            event.subject.fy = event.y;
+        }
+        function dragended(event) {
+            if (!event.active) simulation.alphaTarget(0);
+            event.subject.fx = null;
+            event.subject.fy = null;
+        }
+    }
+
+    function handleQuery() {
+        const query1 = document.getElementById('query-input1').value.trim();
+        const query2 = document.getElementById('query-input2').value.trim();
+        const node1 = nodes.find(n => n.id === query1);
+        const node2 = query2 ? nodes.find(n => n.id === query2) : null;
+
+        if (!query1) {
+            alert('Please enter at least one node public key');
+            return;
+        }
+
+        if (!node1) {
+            alert(`Start node ${query1} not found`);
+            return;
+        }
+
+        if (!query2) {
+            highlightNode(node1);
+            centerNode(node1);
+            showNodeInfo(node1.id);
+        } else if (!node2) {
+            alert(`Target node ${query2} not found`);
+        } else if (query1 === query2) {
+            highlightNode(node1);
+            centerNode(node1);
+            showNodeInfo(node1.id);
+        } else {
+            const path = findPath(query1, query2);
+            if (path) {
+                highlightPath(path);
+                centerPath(path);
+            } else {
+                alert(`No path found from ${query1} to ${query2}.\nCurrent filter: ${document.getElementById('channel-filter').value}\nAvailable nodes: ${nodes.length}`);
+            }
+        }
+    }
+
+    function findPath(startId, endId) {
+        const graph = new Map();
+        edges.forEach(edge => {
+            if (!graph.has(edge.source.id)) graph.set(edge.source.id, new Set());
+            if (!graph.has(edge.target.id)) graph.set(edge.target.id, new Set());
+            graph.get(edge.source.id).add(edge.target.id);
+            graph.get(edge.target.id).add(edge.source.id);
+        });
+
+        const visited = new Set();
+        const prev = new Map();
+        const queue = [startId];
+        visited.add(startId);
+
+        while (queue.length > 0) {
+            const current = queue.shift();
+            if (current === endId) break;
+
+            const neighbors = graph.get(current) || new Set();
+            for (const neighbor of neighbors) {
+                if (!visited.has(neighbor)) {
+                    visited.add(neighbor);
+                    prev.set(neighbor, current);
+                    queue.push(neighbor);
+                }
+            }
+        }
+
+        if (!visited.has(endId)) return null;
+
+        const path = [];
+        let current = endId;
+        while (current !== startId) {
+            path.unshift(current);
+            current = prev.get(current);
+        }
+        path.unshift(startId);
+        return path;
+    }
+
+    function highlightNode(node) {
+        d3.selectAll('.node').classed('dimmed', true).classed('path-node', false);
+        d3.selectAll('.edge').classed('dimmed', true).classed('path-edge', false);
+        d3.select(`#node-${node.id}`).classed('highlighted-node', true).classed('dimmed', false);
+        edges.forEach(e => {
+            if (e.source.id === node.id || e.target.id === node.id) {
+                d3.select(`[x1="${e.source.x}"][y1="${e.source.y}"][x2="${e.target.x}"][y2="${e.target.y}"]`)
+                    .classed('highlighted-edge', true)
+                    .classed('dimmed', false);
+            }
+        });
+        setTimeout(resetHighlight, 3000);
+    }
+
+    function highlightPath(path) {
+        d3.selectAll('.node').classed('dimmed', true).classed('path-node', false);
+        d3.selectAll('.edge').classed('dimmed', true).classed('path-edge', false);
+
+        path.forEach(nodeId => {
+            d3.select(`#node-${nodeId}`).classed('path-node', true).classed('dimmed', false);
+        });
+
+        for (let i = 0; i < path.length - 1; i++) {
+            const sourceId = path[i];
+            const targetId = path[i + 1];
+            const edge = edges.find(e =>
+                (e.source.id === sourceId && e.target.id === targetId) ||
+                (e.source.id === targetId && e.target.id === sourceId)
+            );
+            if (edge) {
+                d3.select(`[x1="${edge.source.x}"][y1="${edge.source.y}"][x2="${edge.target.x}"][y2="${edge.target.y}"]`)
+                    .classed('path-edge', true)
+                    .classed('dimmed', false);
+            }
+        }
+        setTimeout(resetHighlight, 5000);
+    }
+
+    function centerNode(node) {
+        const width = window.innerWidth;
+        const height = window.innerHeight * 0.7;
+        const scale = 2;
+        const x = -node.x * scale + width / 2;
+        const y = -node.y * scale + height / 2;
+
+        svg.transition()
+            .duration(750)
+            .call(zoom.transform, d3.zoomIdentity.translate(x, y).scale(scale));
+    }
+
+    function centerPath(path) {
+        const pathNodes = path.map(id => nodes.find(n => n.id === id));
+        const xMin = Math.min(...pathNodes.map(n => n.x));
+        const xMax = Math.max(...pathNodes.map(n => n.x));
+        const yMin = Math.min(...pathNodes.map(n => n.y));
+        const yMax = Math.max(...pathNodes.map(n => n.y));
+
+        const width = window.innerWidth;
+        const height = window.innerHeight * 0.7;
+        const pathWidth = xMax - xMin;
+        const pathHeight = yMax - yMin;
+        const scale = Math.min(width / (pathWidth * 1.2), height / (pathHeight * 1.2), 2);
+        const x = -(xMin + pathWidth / 2) * scale + width / 2;
+        const y = -(yMin + pathHeight / 2) * scale + height / 2;
+
+        svg.transition()
+            .duration(750)
+            .call(zoom.transform, d3.zoomIdentity.translate(x, y).scale(scale));
+    }
+
+    function resetHighlight() {
+        d3.selectAll('.node').classed('highlighted-node', false).classed('path-node', false).classed('dimmed', false);
+        d3.selectAll('.edge').classed('highlighted-edge', false).classed('path-edge', false).classed('dimmed', false);
+    }
+
+    function showNodeInfo(nodeId) {
+        const relatedChannels = edges.filter(e => e.source.id === nodeId || e.target.id === nodeId);
+        const ckbCapacity = relatedChannels.filter(e => !e.isUDT).reduce((sum, e) => sum + e.capacity, 0).toFixed(2);
+        const udtCapacity = relatedChannels.filter(e => e.isUDT).reduce((sum, e) => sum + e.capacity, 0).toFixed(2);
+        const avgFeeRate = relatedChannels.reduce((sum, e) => sum + e.fee_rate, 0) / relatedChannels.length || 0;
+        const lastUpdatedChannels = rpcData?.result.channels
+            .filter(c => c.node1 === nodeId || c.node2 === nodeId)
+            .map(c => parseInt(c[`last_updated_timestamp_of_node${c.node1 === nodeId ? 1 : 2}`], 16)) || [];
+        const lastUpdated = lastUpdatedChannels.length ? new Date(Math.max(...lastUpdatedChannels)).toLocaleString() : 'Unknown';
+
+        document.getElementById('node-id').textContent = nodeId;
+        document.getElementById('channel-count-info').textContent = relatedChannels.length;
+        document.getElementById('ckb-capacity-info').textContent = `${ckbCapacity} ckb`;
+        document.getElementById('udt-capacity-info').textContent = `${udtCapacity} UDT`;
+        document.getElementById('avg-fee-rate').textContent = `${avgFeeRate.toFixed(0)} ppm`;
+        document.getElementById('last-updated').textContent = lastUpdated;
+        document.getElementById('info-panel').style.display = 'block';
+    }
+
+    function closeInfoPanel() {
+        document.getElementById('info-panel').style.display = 'none';
+    }
+</script>
+</body>
+</html>
