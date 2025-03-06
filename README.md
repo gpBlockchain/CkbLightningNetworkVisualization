@@ -55,7 +55,7 @@ Key enhancements include animated path highlighting, public node identification 
 You can try the live demo here:  
 [CKB Lightning Network Visualization](https://gpblockchain.github.io/CkbLightningNetworkVisualization/)
 
-**Note**: The demo uses the default RPC endpoint (`https://crossorigin.me/http://18.162.235.225:8227`), which may be unavailable. Use a local RPC endpoint (e.g., `http://127.0.0.1:8229`) with the provided proxy for best results.
+**Note**: The demo uses the default RPC endpoint (`https://proxy.cors.sh/http://18.162.235.225:8227`), which may be unavailable. Use a local RPC endpoint (e.g., `http://127.0.0.1:8229`) with the provided proxy for best results.
 
 ## Installation
 
