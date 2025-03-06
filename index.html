@@ -21,10 +21,32 @@
         .public-node { fill: #FFD700; stroke: #FFA500; stroke-width: 3px; }
         .highlighted-node { transform: scale(1.5); stroke: #F7931A; stroke-width: 2px; animation: blink 1s infinite; }
         .highlighted-edge { stroke: #F7931A; stroke-width: 3px; opacity: 1.0; }
-        .path-node { stroke: #00FF00; stroke-width: 2px; fill: #00FF00; }
-        .path-edge { stroke: #00FF00; stroke-width: 4px; opacity: 1.0; }
-        .dimmed { opacity: 0.3; }
+        .path-node {
+            stroke: #00FF00;
+            stroke-width: 4px; /* 增加边框宽度 */
+            fill: #00FF00;
+            transform: scale(1.5); /* 更大放大效果 */
+            transition: transform 0.3s ease; /* 平滑过渡 */
+            animation: pulse 1.5s infinite; /* 脉动动画 */
+        }
+        .path-edge {
+            stroke: #00FF00;
+            stroke-width: 6px; /* 加粗路径边 */
+            opacity: 1.0;
+            animation: glow 1.5s infinite; /* 发光动画 */
+        }
+        .dimmed { opacity: 0.1; } /* 降低非路径元素透明度 */
         @keyframes blink { 50% { stroke-opacity: 0.5; } }
+        @keyframes pulse { /* 脉动动画 */
+            0% { transform: scale(1.5); }
+            50% { transform: scale(1.7); }
+            100% { transform: scale(1.5); }
+        }
+        @keyframes glow { /* 发光动画 */
+            0% { stroke-opacity: 1; }
+            50% { stroke-opacity: 0.6; }
+            100% { stroke-opacity: 1; }
+        }
         .crown { fill: #FFD700; stroke: #FFA500; stroke-width: 1px; }
     </style>
 </head>
@@ -36,13 +58,13 @@
         <button onclick="handleQuery()">Query</button>
     </div>
     <div id="rpc-bar">
-        <input type="text" id="rpc-url" placeholder="Enter RPC Address" value="https://proxy.cors.sh/http://18.162.235.225:8227">
+        <input type="text" id="rpc-url" placeholder="Enter RPC Address" value="https://crossorigin.me/http://18.162.235.225:8227">
         <button onclick="fetchRPC()">Fetch RPC Data</button>
     </div>
     <div id="filter-bar">
         <select id="channel-filter" onchange="applyFilter()">
             <option value="all">Show All Channels</option>
-            <option value="ckb">Show CKB Channels Only</option> <!-- 修改为 CKB -->
+            <option value="ckb">Show CKB Channels Only</option>
             <option value="udt">Show UDT Channels Only</option>
         </select>
     </div>
@@ -58,7 +80,7 @@
         <p>Total Channels</p>
     </div>
     <div class="stat-card">
-        <h3 id="ckb-capacity">0 CKB</h3> <!-- 修改为 CKB Capacity -->
+        <h3 id="ckb-capacity">0 CKB</h3>
         <p>CKB Capacity</p>
     </div>
     <div class="stat-card">
@@ -75,7 +97,7 @@
     <p><strong>Node Name:</strong> <span id="node-name"></span></p>
     <p><strong>Addresses:</strong> <span id="node-addresses"></span></p>
     <p><strong>Connected Channels:</strong> <span id="channel-count-info"></span></p>
-    <p><strong>CKB Capacity:</strong> <span id="ckb-capacity-info"></span> <!-- 修改为 CKB Capacity -->
+    <p><strong>CKB Capacity:</strong> <span id="ckb-capacity-info"></span>
     <p><strong>UDT Capacity:</strong> <span id="udt-capacity-info"></span></p>
     <p><strong>Average Fee Rate:</strong> <span id="avg-fee-rate"></span></p>
     <p><strong>Last Updated:</strong> <span id="last-updated"></span></p>
@@ -93,7 +115,7 @@
     let svg, g, zoom;
 
     const THREE_DAYS_MS = 3 * 24 * 60 * 60 * 1000;
-    const CURRENT_TIME = new Date().getTime();
+    const CURRENT_TIME = new Date('March 04, 2025').getTime();
 
     function updateStatus(message) {
         document.getElementById('status').textContent = message;
@@ -181,9 +203,9 @@
             allEdges.push({
                 source: channel.node1,
                 target: channel.node2,
-                capacity: parseInt(channel.capacity, 16) / 1e8, // 假设 capacity 已转换为 CKB 单位
+                capacity: parseInt(channel.capacity, 16) / 1e8,
                 isUDT: channel.udt_type_script !== null,
-                udtType: channel.udt_type_script ? 'UDT' : 'CKB', // 修改为 CKB
+                udtType: channel.udt_type_script ? 'UDT' : 'CKB',
                 fee_rate: (parseInt(channel.fee_rate_of_node1, 16) + parseInt(channel.fee_rate_of_node2, 16)) / 2,
                 channel_outpoint: channel.channel_outpoint
             });
@@ -209,7 +231,7 @@
 
     function applyFilter() {
         const filter = document.getElementById('channel-filter').value;
-        if (filter === 'ckb') { // 修改为 ckb
+        if (filter === 'ckb') {
             edges = allEdges.filter(e => !e.isUDT);
         } else if (filter === 'udt') {
             edges = allEdges.filter(e => e.isUDT);
@@ -228,9 +250,9 @@
     function updateOverview() {
         document.getElementById('node-count').textContent = nodes.length;
         document.getElementById('channel-count').textContent = edges.length;
-        const ckbCapacity = edges.filter(e => !e.isUDT).reduce((sum, e) => sum + e.capacity, 0).toFixed(2); // 修改为 CKB
+        const ckbCapacity = edges.filter(e => !e.isUDT).reduce((sum, e) => sum + e.capacity, 0).toFixed(2);
         const udtCapacity = edges.filter(e => e.isUDT).reduce((sum, e) => sum + e.capacity, 0).toFixed(2);
-        document.getElementById('ckb-capacity').textContent = `${ckbCapacity} CKB`; // 修改为 CKB
+        document.getElementById('ckb-capacity').textContent = `${ckbCapacity} CKB`;
         document.getElementById('udt-capacity').textContent = `${udtCapacity} UDT`;
     }
 
@@ -373,18 +395,26 @@
                 highlightPath(path);
                 centerPath(path);
             } else {
-                alert(`No path found from ${query1} to ${query2}.\nCurrent filter: ${document.getElementById('channel-filter').value}\nAvailable nodes: ${nodes.length}`);
+                alert(`No path found from ${query1} to ${query2}.\nAvailable nodes: ${nodes.length}`);
             }
         }
     }
 
     function findPath(startId, endId) {
         const graph = new Map();
-        edges.forEach(edge => {
-            if (!graph.has(edge.source)) graph.set(edge.source, new Set());
-            if (!graph.has(edge.target)) graph.set(edge.target, new Set());
-            graph.get(edge.source).add(edge.target);
-            graph.get(edge.target).add(edge.source);
+        if (!rpcData || !rpcData.result || !rpcData.result.channels) {
+            console.error('No graph_channels data available');
+            return null;
+        }
+
+        rpcData.result.channels.forEach(channel => {
+            const node1 = channel.node1;
+            const node2 = channel.node2;
+
+            if (!graph.has(node1)) graph.set(node1, new Set());
+            if (!graph.has(node2)) graph.set(node2, new Set());
+            graph.get(node1).add(node2);
+            graph.get(node2).add(node1);
         });
 
         const visited = new Set();
@@ -433,24 +463,40 @@
     }
 
     function highlightPath(path) {
+        // 降低非路径元素的透明度
         d3.selectAll('.node-group').classed('dimmed', true).select('.node').classed('path-node', false);
         d3.selectAll('.edge').classed('dimmed', true).classed('path-edge', false);
 
+        // 高亮路径中的所有节点
         path.forEach(nodeId => {
-            d3.select(`#node-group-${nodeId}`).select('.node').classed('path-node', true).classed('dimmed', false);
+            const nodeGroup = d3.select(`#node-group-${nodeId}`);
+            nodeGroup.select('.node')
+                .classed('path-node', true)
+                .classed('dimmed', false);
         });
 
+        // 高亮路径中的边
         for (let i = 0; i < path.length - 1; i++) {
             const sourceId = path[i];
             const targetId = path[i + 1];
-            const edge = edges.find(e =>
-                (e.source === sourceId && e.target === targetId) ||
-                (e.source === targetId && e.target === sourceId)
+            const channel = rpcData.result.channels.find(c =>
+                (c.node1 === sourceId && c.node2 === targetId) ||
+                (c.node1 === targetId && c.node2 === sourceId)
             );
-            if (edge) {
-                d3.select(`[x1="${edge.source.x}"][y1="${edge.source.y}"][x2="${edge.target.x}"][y2="${edge.target.y}"]`)
-                    .classed('path-edge', true)
-                    .classed('dimmed', false);
+            if (channel) {
+                const sourceNode = nodes.find(n => n.id === sourceId);
+                const targetNode = nodes.find(n => n.id === targetId);
+                if (sourceNode && targetNode) {
+                    const edge = edges.find(e =>
+                        (e.source.id === sourceId && e.target.id === targetId) ||
+                        (e.source.id === targetId && e.target.id === sourceId)
+                    );
+                    if (edge) {
+                        d3.select(`[x1="${edge.source.x}"][y1="${edge.source.y}"][x2="${edge.target.x}"][y2="${edge.target.y}"]`)
+                            .classed('path-edge', true)
+                            .classed('dimmed', false);
+                    }
+                }
             }
         }
         setTimeout(resetHighlight, 5000);
@@ -498,7 +544,7 @@
 
         const relatedChannels = rpcData.result.channels.filter(c => c.node1 === nodeId || c.node2 === nodeId);
 
-        let ckbCapacity = 0; // 修改为 CKB
+        let ckbCapacity = 0;
         let udtCapacity = 0;
         let totalFeeRate = 0;
 
@@ -508,7 +554,7 @@
             if (isUDT) {
                 udtCapacity += capacity;
             } else {
-                ckbCapacity += capacity; // 修改为 CKB
+                ckbCapacity += capacity;
             }
             const feeRate = (parseInt(channel.fee_rate_of_node1, 16) + parseInt(channel.fee_rate_of_node2, 16)) / 2;
             totalFeeRate += feeRate;
@@ -525,7 +571,7 @@
         document.getElementById('node-name').textContent = node.isPublic ? node.publicInfo.node_name || 'Unnamed' : 'N/A';
         document.getElementById('node-addresses').textContent = node.isPublic ? node.publicInfo.addresses.join(', ') : 'N/A';
         document.getElementById('channel-count-info').textContent = relatedChannels.length;
-        document.getElementById('ckb-capacity-info').textContent = `${ckbCapacity.toFixed(2)} CKB`; // 修改为 CKB
+        document.getElementById('ckb-capacity-info').textContent = `${ckbCapacity.toFixed(2)} CKB`;
         document.getElementById('udt-capacity-info').textContent = `${udtCapacity.toFixed(2)} UDT`;
         document.getElementById('avg-fee-rate').textContent = `${avgFeeRate.toFixed(0)} ppm`;
         document.getElementById('last-updated').textContent = lastUpdated;
